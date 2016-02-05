@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<meta content="text/html;charset=utf-8" http-equiv="Content-Type">
+<html>
+
+<head>
+<title>clock</title>
+
+<script type='text/javascript'>
+
+var utc=false;
+var degree_max=360.0;
+var deg_to_rad=(Math.PI/180.0);
+
+var utc_toggle_cntr_x=0.0;
+var utc_toggle_cntr_y=0.0;
+var utc_toggle_rad=0.0;
+
+//pads zeros in front of a number until the number with padding has the desired number of digits
+function pad_zero(digits,number){
+	//the +'' is necessary to type-cast to a string, since javascript's types are super stupid
+	if((number+'').length<digits){
+		return pad_zero(digits,'0'+number);
+	}
+	return number;
+}
+
+function start_clock(canvas_id){
+	var canvas=document.getElementById(canvas_id);
+	var buffer_px=20;
+	
+	canvas.width=window.innerWidth-buffer_px;
+	canvas.height=window.innerHeight-buffer_px;
+	
+	var center_x=canvas.width/2;
+	var center_y=canvas.height/2;
+	
+	var d=new Date();
+	
+	if(utc){
+		var milliseconds=d.getUTCMilliseconds();
+		var seconds=d.getUTCSeconds();
+		var minutes=d.getUTCMinutes();
+		var hours=d.getUTCHours();
+	}else{
+		var milliseconds=d.getMilliseconds();
+		var seconds=d.getSeconds();
+		var minutes=d.getMinutes();
+		var hours=d.getHours();
+	}
+	
+	var pm=false;
+	if(hours>=12){
+		pm=true;
+		if(hours>12){
+			hours-=12;
+		}
+	}
+	
+	var sec_ang=((degree_max-(((seconds+(milliseconds/1000.0))/60.0)*degree_max))+90.0)*deg_to_rad;
+	var min_ang=((degree_max-(((minutes+(seconds/60.0))/60.0)*degree_max))+90.0)*deg_to_rad;
+	var hour_ang=((degree_max-(((hours+(minutes/60.0))/12.0)*degree_max))+90.0)*deg_to_rad;
+	
+	var sec_color='#00ff00';
+	var min_color='#0000ff';
+	var hour_color='#ff0000';
+	
+	var min_sz=Math.min(canvas.width,canvas.height);
+	
+	var sec_radius=(min_sz/3);
+	var min_radius=(min_sz/4);
+	var hour_radius=(min_sz/5);
+	
+	var context=canvas.getContext('2d');
+	context.clearRect(0,0,canvas.width,canvas.height);
+	
+	context.fillStyle='#000000';
+	context.strokeStyle='#000000';
+	context.lineWidth=3;
+	
+	//draw a circle around the clock face
+	var face_radius=(min_sz/2.5);
+	context.strokeStyle='#000000';
+	context.fillStyle='#000000';
+	context.beginPath();
+	context.moveTo(center_x+face_radius,center_y);
+	context.arc(center_x,center_y,face_radius+1,0,Math.PI*2,false);
+	context.stroke();
+	
+	//draw hour labels
+	for(var i=1;i<=12;i++){
+		var angle=((degree_max-((i/12.0)*degree_max))+90.0)*deg_to_rad;
+		
+		context.fillStyle='#000000';
+		context.beginPath();
+		context.font='12px Times New Roman';
+		var rad_diff=10;
+		context.fillText(i,center_x-(rad_diff/3)+(Math.cos(angle)*(face_radius-rad_diff)),canvas.height-(center_y-(rad_diff/3)+(Math.sin(angle)*(face_radius-rad_diff))));
+		context.fill();
+	}
+	
+	context.strokeStyle=sec_color;
+	context.fillStyle=sec_color;
+	context.beginPath();
+	context.moveTo(center_x,center_y);
+	context.lineTo(center_x+(Math.cos(sec_ang)*sec_radius),canvas.height-(center_y+Math.sin(sec_ang)*sec_radius));
+	context.stroke();
+	
+	context.strokeStyle=min_color;
+	context.fillStyle=min_color;
+	context.beginPath();
+	context.moveTo(center_x,center_y);
+	context.lineTo(center_x+(Math.cos(min_ang)*min_radius),canvas.height-(center_y+Math.sin(min_ang)*min_radius));
+	context.stroke();
+	
+	context.strokeStyle=hour_color;
+	context.fillStyle=hour_color;
+	context.beginPath();
+	context.moveTo(center_x,center_y);
+	context.lineTo(center_x+(Math.cos(hour_ang)*hour_radius),canvas.height-(center_y+Math.sin(hour_ang)*hour_radius));
+	context.stroke();
+	
+	context.fillStyle='#000000';
+	context.fillText(pad_zero(2,hours)+':'+pad_zero(2,minutes)+':'+pad_zero(2,seconds)+' '+(pm?'pm':'am')+' '+(utc?'UTC':'LOCAL TIME'),5,15);
+//	context.fillText(pad_zero(2,hours)+':'+pad_zero(2,minutes)+':'+pad_zero(2,seconds),5,15);
+	context.fill();
+	
+	
+	//draw an am indicator
+	var ind_radius=(min_sz/20);
+	
+	context.fillStyle='#000000';
+	context.fillText('AM',center_x+face_radius,center_y+face_radius-(ind_radius+5));
+	
+	//outline
+	context.lineWidth=1;
+	context.strokeStyle='#000000';
+	context.beginPath();
+	context.moveTo(center_x+face_radius+ind_radius,center_y+face_radius);
+	context.arc(center_x+face_radius,center_y+face_radius,ind_radius,0,Math.PI*2,false);
+	context.stroke();
+	
+	//if it's the AM, then fill in with yellow
+	if(!pm){
+		context.fillStyle='#ffff00';
+		context.beginPath();
+		context.moveTo(center_x+face_radius+ind_radius,center_y+face_radius);
+		context.arc(center_x+face_radius,center_y+face_radius,ind_radius,0,Math.PI*2,false);
+		context.fill();
+	}
+	
+	//draw a UTC indicator
+	context.fillStyle='#000000';
+	context.fillText('UTC',center_x-face_radius-(ind_radius+5),center_y+face_radius-(ind_radius+5));
+	context.fillText('[click to toggle UTC]',center_x-face_radius-(ind_radius+8),center_y+face_radius+(ind_radius+11));
+	
+	//outline
+	context.lineWidth=1;
+	context.strokeStyle='#000000';
+	context.beginPath();
+	context.moveTo(center_x-face_radius+ind_radius,center_y+face_radius);
+	context.arc(center_x-face_radius,center_y+face_radius,ind_radius,0,Math.PI*2,false);
+	context.stroke();
+	
+	//if we're on UTC time, then fill in with yellow
+	if(utc){
+//		context.fillStyle='#ffff00';
+		context.fillStyle='#0000ff';
+		context.beginPath();
+		context.moveTo(center_x-face_radius+ind_radius,center_y+face_radius);
+		context.arc(center_x-face_radius,center_y+face_radius,ind_radius,0,Math.PI*2,false);
+		context.fill();
+	}
+	
+	//store where the utc indicator was so it can be used as a user-interactive toggle
+	utc_toggle_cntr_x=center_x-face_radius;
+	utc_toggle_cntr_y=center_y+face_radius;
+	utc_toggle_rad=ind_radius;
+	
+	//queue up a later clock update
+//	setTimeout(function(){start_clock(canvas_id);},1000); //choppy (1 Hz) display
+	setTimeout(function(){start_clock(canvas_id);},50); //smooth (20 Hz) display
+}
+
+//mouse handling helper function, gets cursor position within canvas
+//this is needed to account for canvas offsets, etc.
+function get_cursor_position(e,canvas) {
+	var x;
+	var y;
+	if(e.pageX || e.pageY){
+		x=e.pageX;
+		y=e.pageY;
+	}else{
+		x=e.clientX+document.body.scrollLeft+document.documentElement.scrollLeft;
+		y=e.clientY+document.body.scrollTop+document.documentElement.scrollTop;
+	}
+	x-=canvas.offsetLeft;
+	y-=canvas.offsetTop;
+
+	return [x,y];
+}
+
+//handle a click event, so the user can toggle utc at runtime
+function handle_click(e,canvas_id){
+	var coords=get_cursor_position(e,document.getElementById(canvas_id));
+	var x=coords[0];
+	var y=coords[1];
+	
+	//calculate distance with the pythagorean theorum
+	var dist=Math.pow(Math.pow(x-utc_toggle_cntr_x,2)+Math.pow(y-utc_toggle_cntr_y,2),0.5);
+	
+	//if the user was within the toggle button (by radius) then toggle utc
+	if(dist<=utc_toggle_rad){
+		utc=(!utc);
+	}
+}
+
+</script>
+
+</head>
+
+<body onload='javascript:start_clock("clock_disp");' onclick='javascript:handle_click(event,"clock_disp");'>
+
+<canvas style='margin: 0 auto; display: flex; justify-content: center; border:2px solid black;' id='clock_disp' width='200' height='200'>
+</canvas>
+
+</body>
+
+</html>
+

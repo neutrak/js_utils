@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Outta Timeline</title>
+
+<style>
+body{
+	text-align:center;
+	background-color:#eeeeee;
+}
+table{
+	margin:0 auto;
+	display:flex;
+	text-align:center;
+	justify-content:center;
+}
+td{
+	border:1px solid black;
+}
+.notification{
+	background-color:rgba(255,170,170,1);
+}
+</style>
+
+<link rel='shortcut icon' type='image/png' href='images/outta-timeline.png'></link>
+
+<script type='text/javascript'>
+//subtask type, the stucture which will store an
+//individually acknowledged work item
+function subtask_t(name,tot_time,blocked){
+	this.name=name;
+	//time this subtask is expected to take, in minutes
+	this.tot_time=tot_time;
+
+	//should this task wait for the prior task to be completed or not?
+	this.blocked=blocked;
+	
+	//metadata for tracking purposes
+	this.active=false;
+	this.timestamp=-1;
+	this.editing=false;
+}
+
+//task type, the structure which will store a complete task
+function task_t(tsk_name,subtasks){
+	this.tsk_name=tsk_name;
+	
+	//a task contains an ordered list of subtasks
+	this.subtasks=subtasks;
+}
+
+//file-global variables
+
+//active task and subtask section
+var actv_tsk=null;
+var actv_sctn_idx=0;
+
+//a list of all tasks which are saved
+var glbl_task_list=[];
+
+//fade a div
+function div_fade(div,r,g,b,a){
+	//refresh time, in milliseconds
+	var refresh_wait=50;
+	if(a>=0){
+		div.setAttribute('style','background-color:rgba('+r+','+g+','+b+','+a+');');
+		setTimeout(function(){div_fade(div,r,g,b,a-(1/refresh_wait));},refresh_wait);
+	}else{
+		div.innerHTML='';
+		div.setAttribute('style','background-color:rgba('+r+','+g+','+b+',1);');
+	}
+}
+
+//give the requested notification to the user via a fading div
+function notify(text,dsp_time,rgb){
+	var notify_div=document.getElementById('notify');
+	notify_div.innerHTML=text;
+	notify_div.setAttribute('style','background-color:rgba('+rgb[0]+','+rgb[1]+','+rgb[2]+',1);');
+	
+	//if a display time was given then fade out after that time
+	if(dsp_time>=0){
+		setTimeout(function(){div_fade(notify_div,rgb[0],rgb[1],rgb[2],1);},dsp_time);
+	//if no display time was given then display forever (until over-written)
+	//and re-set background in case it was previous faded
+	}else{
+		notify_div.setAttribute('style','background-color:rgba('+rgb[0]+','+rgb[1]+','+rgb[2]+',1);');
+	}
+}
+
+//mark a subtask complete and go on to the next one
+function btn_subtsk_done(){
+	//if there's another section after this section,
+	//then go to the next section and set that active
+	var active_subtasks=get_section_members(actv_tsk,actv_sctn_idx)
+//	console.log('subtask section is done; actv_sctn_idx='+actv_sctn_idx+'; have '+active_subtasks.length+' subtasks in this section');
+	if(actv_sctn_idx+active_subtasks.length<actv_tsk.subtasks.length){
+		//set active/inactive by parallel-executed section
+		//rather than by individual subtask
+		active_subtasks=get_section_members(actv_tsk,actv_sctn_idx);
+		for(var n=0;n<active_subtasks.length;n++){
+			actv_tsk.subtasks[active_subtasks[n]].active=false;
+			actv_tsk.subtasks[active_subtasks[n]].timestamp=-1;
+			updt_tmr(active_subtasks[n],false);
+		}
+		var sctn_idx_inc=active_subtasks.length;
+		
+		//skip over anything executing in parallel
+		//the next section starts after all parallel-executing tasks
+		//hence the +active_subtasks.length here, instead of +1
+		active_subtasks=get_section_members(actv_tsk,actv_sctn_idx+(active_subtasks.length));
+		for(var n=0;n<active_subtasks.length;n++){
+			actv_tsk.subtasks[active_subtasks[n]].active=true;
+			actv_tsk.subtasks[active_subtasks[n]].timestamp=Date.now();
+			updt_tmr(active_subtasks[n],true);
+		}
+		disp_timeline(actv_tsk,actv_sctn_idx+sctn_idx_inc,false);
+	//if there's no section after the current section, then the task is done
+	}else{
+		notify('Info: Task '+actv_tsk.tsk_name+' complete',5000,[10,255,10]);
+		//set active/inactive by parallel-executed section
+		//rather than by individual subtask
+		active_subtasks=get_section_members(actv_tsk,actv_sctn_idx);
+		for(var n=0;n<active_subtasks.length;n++){
+			actv_tsk.subtasks[active_subtasks[n]].active=false;
+			actv_tsk.subtasks[active_subtasks[n]].timestamp=-1;
+			updt_tmr(active_subtasks[n],false);
+		}
+		
+		disp_timeline(actv_tsk,0,false);
+	}
+}
+
+//start timing the requested subtask
+function btn_subtsk_timer(idx){
+	if((idx>=0) && (idx<actv_tsk.subtasks.length)){
+		if(actv_tsk.subtasks[idx].timestamp<0){
+			actv_tsk.subtasks[idx].timestamp=Date.now();
+		}else{
+			actv_tsk.subtasks[idx].timestamp=(-1);
+		}
+		updt_tmr(idx,true);
+	}
+}
+
+//get all of the subtask indexes within a parallel-executing section
+//starting at section_idx
+function get_section_members(tsk,section_idx){
+	//invalid task or index returns empty list
+	if((tsk==null) || (section_idx<0) || (section_idx>=tsk.subtasks.length)){
+		return [];
+	}
+	
+	//get the list of all section subtasks by looking through the subtasks
+	//until a blocker is found or the end of the list is reached
+	var subtask_list=[section_idx];
+	for(var n=section_idx+1;n<tsk.subtasks.length;n++){
+		//blocking tasks come AFTER the time for this section
+		//and hence act as a delimiter here
+		if((tsk.subtasks[n].blocked)){
+			//break on a block
+			break;
+		//non-blocking tasks can be done in parallel
+		}else{
+			subtask_list.push(n);
+		}
+	}
+	
+	//the returned list consists of indexes of all of the applicable subtasks
+	//these are indexes into the task.subtasks list, NOT objects
+	return subtask_list;
+}
+
+//find the time required to do a section of tasks in parallel
+//with the section starting at the given section_idx
+function calc_section_time(tsk,section_idx){
+	//invalid task or index returns 0
+	if((tsk==null) || (section_idx<0) || (section_idx>=tsk.subtasks.length)){
+		return 0;
+	}
+	
+	//calculate the time required for this section of parallel tasks
+	//in order to display the maximum
+	var section_time=tsk.subtasks[section_idx].tot_time;
+	for(var n=section_idx+1;n<tsk.subtasks.length;n++){
+		//blocking tasks come AFTER the time for this section
+		//and hence act as a delimiter here
+		if((tsk.subtasks[n].blocked)){
+			//break on a block
+			break;
+		//non-blocking tasks can be done in parallel
+		//the section time is the maximum time for all parallel tasks
+		}else{
+			section_time=Math.max(section_time,tsk.subtasks[n].tot_time);
+		}
+	}
+	
+	return section_time;
+}
+
+//calculate the amount of time it will take to complete the given task
+//values are in minutes
+function tsk_time(tsk){
+	var tot_time=0;
+	//NOTE: subtask 0 should always be blocked,
+	//but a case exists to account for if it's not, for robustness
+	for(var n=0;n<tsk.subtasks.length;n++){
+		//only tasks which must wait for the prior task to complete
+		//count towards the overall task time
+		//(other tasks can be done in parallel)
+		//hence we use section times here
+		if((n==0) || (tsk.subtasks[n].blocked)){
+			tot_time+=calc_section_time(tsk,n);
+		}
+	}
+	return tot_time;
+}
+
+//update a subtask timer to reflect time remaining
+//the TypeError functions are in case an update call was made but the user navigated away
+//and so the element doesn't exist but an update is still being called
+function updt_tmr(subtsk_idx,recurse){
+	if((actv_tsk!=null) && (subtsk_idx>=0) && (subtsk_idx<actv_tsk.subtasks.length)){
+		var subtask=actv_tsk.subtasks[subtsk_idx];
+		if(subtask.timestamp>=0){
+			var time_left=(subtask.timestamp+(subtask.tot_time*60*1000))-Date.now();
+			if(time_left>0){
+				try{
+					document.getElementById('subtsk_'+subtsk_idx+'_tmr').innerHTML=((time_left)/(60*1000)).toFixed(2)+' minute(s) left';
+				}catch(TypeError){
+					return;
+				}
+				if(recurse){
+					//update at roughly 1Hz
+					setTimeout(function(){updt_tmr(subtsk_idx,true);},1000);
+				}
+			}else{
+				//TODO: support "snooze"
+				
+				//alert the user when a timer is past due
+				var notify_string='Info: Subtask \"'+subtask.name+'\" should be completed by now. Please acknowledge.';
+				if(!('Notification' in window)){
+					alert(notify_string+' Also, your browser doesn\'t support notifications.');
+				}else if(Notification.permission==='granted'){
+					new Notification(notify_string);
+				}else if(Notification.permission!=='denied'){
+					Notification.requestPermission(
+						function(permission){
+							if(permission==='granted'){
+								new Notification(notify_string);
+							}
+						}
+					);
+				}
+				notify(notify_string,5000,[10,255,10]);
+				subtask.timestamp=-1;
+				try{
+	//				document.getElementById('subtsk_'+subtsk_idx+'_tmr').innerHTML='';
+					document.getElementById('subtsk_'+subtsk_idx+'_tmr').innerHTML=subtask.tot_time+' minute(s)';
+				}catch(TypeError){
+					return;
+				}
+			}
+		}else{
+			try{
+	//			document.getElementById('subtsk_'+subtsk_idx+'_tmr').innerHTML='';
+				document.getElementById('subtsk_'+subtsk_idx+'_tmr').innerHTML=subtask.tot_time+' minute(s)';
+			}catch(TypeError){
+				return;
+			}
+		}
+	}
+}
+
+//create a table cell for a subtask
+//and highlight it if requested (i.e. if this subtask is active)
+function subtask_td(subtask,hglt,idx){
+	var tbl_tag="\t"+'<td>'+"\n";
+	//if editing this subtask then edit it
+	if(subtask.editing){
+		tbl_tag+='<input id=\'subtsk_'+idx+'_name\' type=\'text\' value=\''+subtask.name+'\' onkeydown=\'javascript:edit_enter(event,'+idx+');\'>'+"<br>\n";
+	//highlight active subtask
+	}else if(hglt){
+		tbl_tag+='<div style=\'background-color:#00ff00;\' onclick=\'javascript:btn_subtsk_done();\' id=\'subtsk_'+idx+'\'>'
+		tbl_tag+=subtask.name;
+		tbl_tag+='</div>'+"\n";
+	}else{
+		tbl_tag+='<div id=\'subtsk_'+idx+'\'>'+subtask.name+'</div>'+"\n";
+	}
+	tbl_tag+='<span onclick=\'javascript:btn_subtsk_done();\' title=\'mark completed\'>(&#10003;)</span>';
+	tbl_tag+='<span onclick=\'javascript:btn_subtsk_timer('+idx+');\' title=\'start/reset timer\'\>(&#10710)</span>';
+	tbl_tag+='<br>';
+	//allow the subtask timer to be edited
+	if(subtask.editing){
+		tbl_tag+='<input id=\'subtsk_'+idx+'_tot_time\' type=\'number\' value=\''+subtask.tot_time+'\' onkeydown=\'javascript:edit_enter(event,'+idx+');\'> minute(s)'+"<br>\n";
+		tbl_tag+='<input id=\'subtsk_'+idx+'_blocked\' type=\'checkbox\' '+(subtask.blocked?'checked':'unchecked')+'> blocked'+"<br>\n";
+	}else{
+		tbl_tag+='<span id=\'subtsk_'+idx+'_tmr\'>'+subtask.tot_time+' minute(s)</span>';
+	}
+	tbl_tag+='<br>';
+	//option to re-order subtasks
+	tbl_tag+='<span onclick=\'javascript:btn_subtsk_order('+idx+',-1);\' title=\'move subtask up\'>(&#8593;)</span>';
+	tbl_tag+='<span onclick=\'javascript:btn_subtsk_order('+idx+',+1);\' title=\'move subtask down\'>(&#8595;)</span>';
+	tbl_tag+='<span onclick=\'javascript:btn_subtsk_ed('+idx+');\' title=\'edit subtask\'>(&#9999;)</span>';
+	tbl_tag+='<span onclick=\'javascript:btn_subtsk_del('+idx+');\' title=\'delete subtask\'>(X)</span>';
+	//if the subtask has a valid timestamp, then a timer has been started
+	//so display the time remaining
+	if(subtask.timestamp>=0){
+		updt_tmr(idx,false);
+	}
+	tbl_tag+="\t"+'</td>'+"\n";
+	return tbl_tag;
+}
+
+//display the timeline for the given task
+function disp_timeline(tsk,subtsk_idx,recurse){
+	//can't display a timeline for a null task
+	if(tsk==null){
+		var tbl_tag='<table>'+"\n";
+		tbl_tag+='<tr><td><span onclick=\'javascript:btn_subtsk_add();\'>(+) add subtask</span></td></tr>'+"\n";
+		tbl_tag+='</table>';
+		document.getElementById('timeline').innerHTML=tbl_tag;
+		return;
+	}
+	
+	//if a task name didn't exist, then use whatever was in the form field
+	if(tsk.tsk_name==''){
+		tsk.tsk_name=document.getElementById('tsk_name').value;
+	}
+	
+	//do bounds checking on subtask index
+	if(subtsk_idx<0 || subtsk_idx>=tsk.subtasks.length){
+		subtsk_idx=0;
+	}
+	
+	var timeline_height=window.innerHeight-320;
+	
+	//if we're displaying a timeline for a task then it's active
+	actv_tsk=tsk;
+	actv_sctn_idx=subtsk_idx;
+	
+	//get the total amount of time this task will take
+	//in minutes
+	var tot_tsk_time=tsk_time(tsk);
+	
+	//create a table for the timeline
+	var tbl_tag='<table>'+"\n";
+
+	//estimated start time of each subtask in relation to the task
+	//the first subtask always starts at time 0
+	var est_time=0;
+	
+	var section_time=calc_section_time(tsk,0);
+	tbl_tag+='<tr style=\'height:'+(section_time/tot_tsk_time)*timeline_height+'px\'>'+"\n";
+	tbl_tag+="\t"+'<td>'+'t '+est_time+'..'+(est_time+section_time)+'</td>'+"\n";
+	est_time+=section_time;
+	
+	//create a table entry for each task, making rows and columns as needed
+	var n=0;
+	while(n<tsk.subtasks.length){
+		//if the previous task must be completed before this task can be started
+		//then create a new row for the new task, since it cannot be done in parallel
+		if((n>0) && (tsk.subtasks[n].blocked)){
+			var section_time=calc_section_time(tsk,n);
+			tbl_tag+='</tr>'+"\n";
+			tbl_tag+='<tr style=\'height:'+(section_time/tot_tsk_time)*timeline_height+'px\'>'+"\n";
+			
+			tbl_tag+="\t"+'<td>'+'t '+est_time+'..'+(est_time+section_time)+'</td>'+"\n";
+			est_time+=section_time;
+		}
+		
+		//each subtask gets its own column, so create blank entries before the subtask
+		//for the columns not associated with the current-interation subtask
+		for(var n2=0;n2<n;n2++){
+			tbl_tag+="\t"+'<td></td>'+"\n";
+		}
+		
+//		tsk.subtasks[n].active=(n==subtsk_idx);
+		tbl_tag+=subtask_td(tsk.subtasks[n],tsk.subtasks[n].active,n);
+		
+		//each subtask gets its own column, so create blank entries after the subtask
+		//for the columns not associated with the current-interation subtask
+		var hit_block=false;
+		for(var n2=n+1;n2<tsk.subtasks.length;n2++){
+			//blocking tasks create a new row
+			if((hit_block) || (tsk.subtasks[n2].blocked)){
+				tbl_tag+="\t"+'<td></td>'+"\n";
+				hit_block=true;
+			//non-blocking tasks don't create a new row
+			}else if(!hit_block){
+//				tsk.subtasks[n2].active=(n2==subtsk_idx);
+				tbl_tag+=subtask_td(tsk.subtasks[n2],tsk.subtasks[n2].active,n2);
+				n++;
+			}
+		}
+		
+		n++;
+	}
+	tbl_tag+='</tr>'+"\n";
+	tbl_tag+='<tr><td colspan=\''+(tsk.subtasks.length+1)+'\'><span onclick=\'javascript:btn_subtsk_add();\'>(+) add subtask</span></td></tr>'+"\n";
+	
+	tbl_tag+='</table>'+"\n";
+	
+	//display the timeline table in the output div
+	//and associated text metadata
+	document.getElementById('timeline').innerHTML=tbl_tag;
+	document.getElementById('tsk_name').value=tsk.tsk_name;
+	document.getElementById('subtsk_name').value=tsk.subtasks[subtsk_idx].name;
+	document.getElementById('tsk_eta').innerHTML=tot_tsk_time;
+	document.getElementById('subtsk_eta').innerHTML=tsk.subtasks[subtsk_idx].tot_time;
+	
+	if(recurse){
+		//note: we have a better way to update the display (timers) without re-drawing the entire timeline
+		//note that GLOBAL variables are passed in, since they might change prior to this call
+		setTimeout(function(){disp_timeline(actv_tsk,actv_sctn_idx,true);},5*1000);
+	}
+}
+
+//save info for any currently-edited tasks
+//so it doesn't get lost or re-set during a display update
+function sync_edits(tsk){
+	for(var n=0;n<tsk.subtasks.length;n++){
+		if(tsk.subtasks[n].editing){
+			try{
+				tsk.subtasks[n].name=document.getElementById('subtsk_'+n+'_name').value;
+				//the -0 here is to type-case to an integer
+				tsk.subtasks[n].tot_time=(document.getElementById('subtsk_'+n+'_tot_time').value)-0;
+				tsk.subtasks[n].blocked=document.getElementById('subtsk_'+n+'_blocked').checked;
+				//note the task is still being edited, we just saved its info
+			}catch(TypeError){
+				//ignore TypeErrors because the task might have been just set to editing
+				//and the display may not have refreshed since then, in which case
+				//the forms we get data from do not yet exist
+			}
+		}
+	}
+}
+
+//allow the subtask to be edited
+function btn_subtsk_ed(idx){
+	if((actv_tsk!=null) && (idx>=0) && (idx<actv_tsk.subtasks.length)){
+		//if this subtask was already being editing then save the edits and stop
+		if(actv_tsk.subtasks[idx].editing){
+			actv_tsk.subtasks[idx].name=document.getElementById('subtsk_'+idx+'_name').value;
+			//the -0 here is to type-case to an integer
+			actv_tsk.subtasks[idx].tot_time=(document.getElementById('subtsk_'+idx+'_tot_time').value)-0;
+			actv_tsk.subtasks[idx].blocked=document.getElementById('subtsk_'+idx+'_blocked').checked;
+			actv_tsk.subtasks[idx].editing=false;
+		//if this subtask wasn't being edited before, it is now
+		}else{
+			actv_tsk.subtasks[idx].editing=true;
+		}
+		
+		//update the display to reflect any changes
+		sync_edits(actv_tsk);
+		disp_timeline(actv_tsk,actv_sctn_idx,false);
+	}
+}
+
+//get key presses for input to save when needed
+function edit_enter(e,idx){
+	//return key saves edit
+	if(e.keyCode==13){
+		btn_subtsk_ed(idx);
+	}
+}
+
+//allow a subtask to be deleted
+function btn_subtsk_del(idx){
+	if((actv_tsk!=null) && (idx>=0) && (idx<actv_tsk.subtasks.length)){
+		//delete this element in the subtasks array
+		actv_tsk.subtasks.splice(idx,1);
+	}
+	
+	//update the display
+	sync_edits(actv_tsk);
+	disp_timeline(actv_tsk,actv_sctn_idx,false);
+}
+
+//allow a subtask to be added
+function btn_subtsk_add(){
+	var subtask=new subtask_t('',0,true);
+	if(actv_tsk==null){
+		actv_tsk=new task_t('',[]);
+		actv_sctn_idx=0;
+	}
+	subtask.editing=true;
+	actv_tsk.subtasks.push(subtask);
+	
+	//update the display
+	sync_edits(actv_tsk);
+	disp_timeline(actv_tsk,actv_sctn_idx,false);
+}
+
+//change the subtask's order in the main list
+function btn_subtsk_order(idx,delta){
+	//if the destination is valid
+	if((actv_tsk!=null) && ((idx+delta)>=0) && ((idx+delta)<actv_tsk.subtasks.length)){
+		//do a simple source->destination swap operation
+		var dst_idx=idx+delta;
+		var tmp_subtsk=actv_tsk.subtasks[dst_idx];
+		actv_tsk.subtasks[dst_idx]=actv_tsk.subtasks[idx];
+		actv_tsk.subtasks[idx]=tmp_subtsk;
+		
+		//update the display
+		sync_edits(actv_tsk);
+		disp_timeline(actv_tsk,actv_sctn_idx,false);
+	}
+}
+
+//create a new task (user pressed button)
+function btn_new_task(){
+	actv_tsk=null;
+	document.getElementById('tsk_name').value='';
+	document.getElementById('subtsk_name').value='';
+
+	document.getElementById('tsk_eta').innerHTML=0;
+	document.getElementById('subtsk_eta').innerHTML=0;
+	
+	document.getElementById('timeline').innerHTML='';
+	
+	disp_timeline(null,0,false);
+}
+
+//save the loaded task (user pressed button)
+function btn_save_task(){
+	var name=document.getElementById('tsk_name').value;
+	if(name==''){
+		notify('Error: Cannot save a task without a task name',5000,[255,170,170]);
+		return;
+	}
+	//set the active task to have the name specified in the name field
+	actv_tsk.tsk_name=name;
+	
+	//store any in-progress subtask edits
+	sync_edits(actv_tsk);
+	
+	var save_key='tasks/'+name;
+	
+	//check if a task with the same name was already in localStorage
+	//if so, we'll over-write it
+	var found_idx=-1;
+	for(var n=0;n<localStorage.length;n++){
+		var stored_task=JSON.parse(localStorage.getItem(localStorage.key(n)));
+		if(stored_task.tsk_name==name){
+			notify('Warning: Overwriting existing task',5000,[255,255,170]);
+			found_idx=n;
+			save_key=localStorage.key(n);
+		}
+	}
+	if((found_idx<0) && (localStorage.getItem(save_key)!=null)){
+		notify('Warning: Overwriting existing task',5000,[255,255,170]);
+	}else if(found_idx<0){
+		notify('Info: Saving task '+actv_tsk.tsk_name+' to browser\'s local storage',5000,[10,255,10]);
+	}
+	localStorage.setItem(save_key,JSON.stringify(actv_tsk));
+	
+	//reload task selection area
+	menu_sel_tsk();
+}
+
+//execute the loaded task (user pressed button)
+function btn_run_task(){
+	if(actv_tsk==null){
+		notify('Error: No task loaded; cannot run',5000,[255,170,170]);
+		return;
+	}
+	notify('Info: Starting task '+actv_tsk.tsk_name+' now',5000,[10,255,10]);
+	if(actv_tsk.subtasks.length>0){
+		//start the entire first parallel section
+		var active_subtasks=get_section_members(actv_tsk,0);
+		for(var n=0;n<active_subtasks.length;n++){
+			actv_tsk.subtasks[active_subtasks[n]].active=true;
+			actv_tsk.subtasks[active_subtasks[n]].timestamp=Date.now();
+			updt_tmr(active_subtasks[n],true);
+		}
+	}
+	sync_edits(actv_tsk);
+	disp_timeline(actv_tsk,0,false);
+}
+
+//delete the task specified in the name field
+function btn_del_task(){
+	//remove this task from localStorage if it was saved
+	var tsk_name=document.getElementById('tsk_name').value;
+	var save_key='tasks/'+tsk_name;
+	for(var n=0;n<localStorage.length;n++){
+		var saved_tsk=JSON.parse(localStorage.getItem(localStorage.key(n)));
+		if(tsk_name==saved_tsk.tsk_name){
+			localStorage.removeItem(localStorage.key(n));
+		}
+	}
+	
+	//remove this task from the global task list, too
+	for(var n=0;n<glbl_task_list.length;n++){
+		if(glbl_task_list[n].tsk_name==tsk_name){
+			//note: we MUST break after a deletion
+			//because we just invalidated our index
+			//this is fine so long as there aren't duplicates (there shouldn't be)
+			glbl_task_list.splice(n,1);
+			break;
+		}
+	}
+	
+	//update the active state
+	menu_sel_tsk();
+	btn_new_task();
+}
+
+//show options for the user to select the task from a list
+function menu_sel_tsk(){
+	//load any saved tasks
+	for(var n=0;n<localStorage.length;n++){
+		var task=JSON.parse(localStorage.getItem(localStorage.key(n)));
+		
+		//check to ensure there are no duplicate entries
+		var found_idx=-1;
+		for(var n2=0;n2<glbl_task_list.length;n2++){
+			if(task.tsk_name==glbl_task_list[n2].tsk_name){
+				found_idx=n2;
+				break;
+			}
+		}
+		
+		//no conflicts; add this task
+		if(found_idx<0){
+			glbl_task_list.push(task);
+		}else{
+			//when a duplicate is found take the most recent one
+			//since premade tasks are loaded prior to user-defined tasks
+			//and user defined tasks should never duplicate each other
+			glbl_task_list[found_idx]=task;
+		}
+	}
+	
+	//sort the task list alphabetically by task name for convenience
+	glbl_task_list.sort(function(a,b){return (a.tsk_name<b.tsk_name)?-1:1;});
+	
+	var output_span='tsk_sel_area';
+	var sel_form='<select>'+"\n";
+	for(var n=0;n<glbl_task_list.length;n++){
+		sel_form+="\t"+'<option onclick=\'javascript:actv_tsk=glbl_task_list['+n+'];disp_timeline(actv_tsk,0,false);\'>'+glbl_task_list[n].tsk_name+'</option>'+"\n";
+	}
+	sel_form+='</select>'+"\n";
+	document.getElementById(output_span).innerHTML=sel_form;
+}
+
+//demo/pre-built tasks for ease
+//these can be over-written by local changes; this is intentional
+//these tasks CANNOT be deleted, so there should be very few of them
+
+//recipes
+glbl_task_list.push(new task_t('recipes/boiled_eggs',[new subtask_t('put eggs and water in pot',2,true),new subtask_t('turn on stove',0.5,true),new subtask_t('boil water with eggs, covered',20,true),new subtask_t('leave boiling and covered',5,true),new subtask_t('turn off stove',1,true),new subtask_t('uncover and let sit',10,false)]));
+
+//chores
+glbl_task_list.push(new task_t('chores/laundry',[new subtask_t('wash colors',40,true),new subtask_t('dry colors',60,true),new subtask_t('wash whites',40,false),new subtask_t('dry whites',60,true),new subtask_t('fold and put away',45,true)]));
+
+</script>
+
+</head>
+
+<body onload='menu_sel_tsk();disp_timeline(null,0,false);'>
+<h1>Outta Timeline</h1>
+<hr>
+
+<button onclick='javascript:btn_new_task();' title='create a new task'>New Task</button>
+<button onclick='javascript:btn_save_task();' title='save the current task'>Save Task</button>
+<br>
+Select Task: <span id='tsk_sel_area' title='select a task from saved tasks'></span>
+<hr>
+
+<div id='notify' class='notification'></div>
+<button onclick='javascript:btn_run_task();' title='execute the loaded task'>Run Task</button>
+<button onclick='javascript:btn_del_task();' title='delete the loaded task (CANNOT BE UNDONE)'>Delete Task</button>
+
+<table>
+<tr>
+	<td>
+		<form action='javascript:btn_save_task();'>
+		[Task]<input type='text' id='tsk_name'>
+		<br>
+		[Subtask]<input type='text' id='subtsk_name'>
+		</form>
+	</td>
+	<td>
+		Estimated task completion time: <span id='tsk_eta'>0</span> minute(s)
+		<br>
+		Estimated subtask completion time: <span id='subtsk_eta'>0</span> minute(s)
+	</td>
+</tr>
+</table>
+<hr>
+
+<div id='timeline'></div>
+
+
+</body>
+</html>
+

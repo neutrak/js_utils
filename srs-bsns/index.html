@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+
+<style>
+html{
+	height:100%;
+	margin:0;
+}
+body{
+	background:#e2e2e2;
+/*	background:linear-gradient( 0deg, #cccccc, #ee6611 ); */
+	height:100%;
+	margin:0;
+	color:#000000;
+	text-align:center;
+}
+table{
+	width:100%;
+}
+th{
+	border:1px solid black;
+	font-size:1.15em;
+}
+td{
+	border:1px solid black;
+}
+td.entry{
+	border:3px outset black;
+}
+td.tsk_name{
+	text-align:left;
+}
+input{
+	width:95%;
+	margin-left:auto;
+	margin-right:auto;
+}
+button{
+	margin-left:auto;
+	margin-right:auto;
+	display:block;
+}
+.alert{
+	background:#ff0000;
+	color:#000000;
+}
+.cmplt{
+	text-decoration:line-through;
+	color:#707070;
+}
+.cmplt_btn{
+	color:#0000ff;
+}
+.reopen_btn{
+	color:#0000ff;
+}
+.del{
+	color:#ff0000;
+}
+.heading{
+	color:#000000;
+	font-size:2em;
+	text-decoration:underline;
+	font-family:Courier;
+}
+.info{
+	text-align:center;
+}
+</style>
+
+<script type='text/javascript'>
+var prgrm_name='srs bsns';
+//var prgrm_name='task mngr';
+var version='0.2.0';
+
+//a task structure, to store a to-do task
+function tsk(tsk_id,tsk_name,tsk_date){
+	this.tsk_id=tsk_id;
+	this.tsk_name=tsk_name;
+	this.tsk_date=tsk_date;
+	this.tsk_cmplt=false;
+	this.tsk_edit=false;
+}
+
+//make an html element fade then disappear
+function fade_disappear(element,red,green,blue,alpha){
+//	console.log('fading, alpha='+alpha);
+	if(alpha<=0){
+		element.innerHTML='';
+		element.style.background='rgba('+red+','+green+','+blue+',1)';
+		element.style.color='rgba(0,0,0,1)';
+	}else{
+		alpha-=0.02;
+		element.style.background='rgba('+red+','+green+','+blue+','+alpha+')';
+		element.style.color='rgba(0,0,0,'+alpha+')';
+		setTimeout(function(){fade_disappear(element,red,green,blue,alpha);},50);
+	}
+}
+
+//just a timed output function that looks like typing
+//pointless but pretty :)
+function timed_output(out_div,out_str,wait_time,cursor_char,do_clear){
+	if(do_clear){
+		document.getElementById(out_div).innerHTML='';
+	}
+	
+	if(out_str.length>0){
+		var new_html=document.getElementById(out_div).innerHTML;
+		
+		if((cursor_char!='') && (new_html!='')){
+			new_html=new_html.substring(0,new_html.length-cursor_char.length);
+		}
+		new_html+=out_str.charAt(0);
+		new_html+=cursor_char;
+		
+		document.getElementById(out_div).innerHTML=new_html;
+		
+		out_str=out_str.substring(1);
+		setTimeout(function(){timed_output(out_div,out_str,wait_time,cursor_char,false);},wait_time);
+	}else if(cursor_char!=''){
+		var new_html=document.getElementById(out_div).innerHTML;
+		document.getElementById(out_div).innerHTML=new_html.substring(0,new_html.length-cursor_char.length);
+	}
+}
+
+//prepend the given pad_char to text until the desired length is reached
+function prefix_pad(text,pad_char,len){
+	if((''+text).length>=len){
+		return text;
+	}
+	return prefix_pad(''+pad_char+text,pad_char,len);
+}
+
+//get all the tasks the user already has from local html5 storage objects
+function get_saved_tasks(){
+	if(!localStorage.getItem('tasks')){
+		return [];
+	}
+	
+	return JSON.parse(localStorage.getItem('tasks'));
+}
+
+//save all current tasks to html5 local storage
+function save_tasks(tasks){
+	localStorage.setItem('tasks',JSON.stringify(tasks));
+}
+
+//get a properly-formatted date
+function get_date(){
+	var now=new Date();
+	//the +1 in month is to make it 1-indexed versus 0
+	//the prefix_pad puts leading 0s on months and dates to maintain a consistent string length
+	return now.getFullYear()+'-'+prefix_pad(now.getMonth()+1,'0',2)+'-'+prefix_pad(now.getDate(),'0',2);
+}
+
+//create a new task based on user input fields and put it in the task array
+function add_tsk_from_user(){
+	var tsk_name=document.getElementById('tsk_name').value;
+	var tsk_date=get_date();
+	if(tsk_name!=''){
+		//unshift places new tasks at the start,
+		//whereas push places them at the end
+		tasks.unshift(new tsk(get_max_id(tasks)+1,tsk_name,tsk_date));
+		save_tasks(tasks);
+		disp_tsk_table(tasks);
+	}else{
+		var notify_div=document.getElementById('notification');
+		notify_div.innerHTML='Err: Name is required when entering a new task';
+		notify_div.style.color='#000000';
+		notify_div.style.background='rgba(255,0,0,1)';
+		setTimeout(function(){fade_disappear(notify_div,255,0,0,1)},4000);
+	}
+}
+
+//get the highest id in the tasks list
+function get_max_id(tasks){
+	var max_id=-1;
+	for(var n=0;n<tasks.length;n++){
+		max_id=(tasks[n].tsk_id>max_id)?tasks[n].tsk_id:max_id;
+	}
+	return max_id;
+}
+
+//mark the given task completed
+function complete_task(id){
+	for(var n=0;n<tasks.length;n++){
+		if(tasks[n].tsk_id==id){
+			tasks[n].tsk_cmplt=true;
+			//ids are unique so we can break here and be safe
+			break;
+		}
+	}
+	
+	refresh_tasks();
+}
+
+//mark a task which was previously completed incomplete again
+function reopen_task(id){
+	for(var n=0;n<tasks.length;n++){
+		if(tasks[n].tsk_id==id){
+			tasks[n].tsk_cmplt=false;
+			//ids are unique so we can break here and be safe
+			break;
+		}
+	}
+	
+	refresh_tasks();
+}
+
+//delete the given task
+function delete_task(id){
+	//re-make the tasks array without the given task (implicitly deleting it)
+	var new_tasks=[];
+	for(var n=0;n<tasks.length;n++){
+		if(tasks[n].tsk_id==id){
+			continue;
+		}
+		new_tasks.push(tasks[n]);
+	}
+	tasks=new_tasks;
+	
+	refresh_tasks();
+}
+
+//re-order the given task to a higher level/priority (lower index)
+function promote_task(id){
+	//note we start at 1 to ensure an n-1 task exists to promote to
+	//this function doesn't do anything on the highest-ranked task; this is intentional
+	for(var n=1;n<tasks.length;n++){
+		if(tasks[n].tsk_id==id){
+			var tmp=tasks[n-1];
+			tasks[n-1]=tasks[n];
+			tasks[n]=tmp;
+		}
+	}
+	
+	refresh_tasks();
+}
+
+//re-order the given task to a lower level/priority (higher index)
+function demote_task(id){
+	//note we end at tasks.length-2 to ensure an n+1 task exists to demote to
+	//this function doesn't do anything on the lowest-ranked task; this is intentional
+	for(var n=0;n<tasks.length-1;n++){
+		if(tasks[n].tsk_id==id){
+			var tmp=tasks[n+1];
+			tasks[n+1]=tasks[n];
+			tasks[n]=tmp;
+			//stop after one demotion,
+			//don't keep demoting until we reach the end (that would be incorrect)
+			break;
+		}
+	}
+	
+	refresh_tasks();
+}
+
+//start editing an existing task
+function edit_task(id){
+	for(var n=0;n<tasks.length;n++){
+		if(tasks[n].tsk_id==id){
+			tasks[n].tsk_edit=true;
+			break;
+		}
+	}
+	
+	refresh_tasks();
+}
+
+//cancel an editing operation on the given task
+function cancel_edit_task(id){
+	for(var n=0;n<tasks.length;n++){
+		if(tasks[n].tsk_id==id){
+			tasks[n].tsk_edit=false;
+			break;
+		}
+	}
+	
+	refresh_tasks();
+}
+
+//save an edited task
+function update_task(id){
+	for(var n=0;n<tasks.length;n++){
+		if(tasks[n].tsk_id==id){
+			var tsk_name=document.getElementById('tsk'+id+'_name').value;
+			if(tsk_name!=''){
+				tasks[n].tsk_name=tsk_name;
+				tasks[n].tsk_edit=false;
+			}else{
+				//a null-named task is an error
+				var notify_div=document.getElementById('notification');
+				notify_div.innerHTML='Err: Name is required when updating a new task';
+				notify_div.style.color='#000000';
+				notify_div.style.background='rgba(255,0,0,1)';
+				setTimeout(function(){fade_disappear(notify_div,255,0,0,1)},4000);
+			}
+			break;
+		}
+	}
+	
+	refresh_tasks();
+}
+
+
+//display a table consisting of the given array of tasks
+function disp_tsk_table(tasks){
+	//build up a table to display data
+	var todo_html_tbl='<table>'+"\n";
+	todo_html_tbl+='<tr>';
+//	todo_html_tbl+='<th>ID</th>';
+	todo_html_tbl+='<th>Name</th>';
+//	todo_html_tbl+='<th>Entry Date</th>';
+	todo_html_tbl+='<th></th>';
+	todo_html_tbl+='<th></th>';
+	todo_html_tbl+='<th></th>';
+	todo_html_tbl+='<th></th>';
+	todo_html_tbl+='</tr>'+"\n";
+
+	//create a blank row at the top for new tasks to be entered
+	todo_html_tbl+='<tr>';
+//	todo_html_tbl+='<td class=\'entry\'><button onclick=\'javascript:add_tsk_from_user();\'>Create</button></td>';
+//	todo_html_tbl+='<td class=\'entry\'><form action=\'javascript:add_tsk_from_user();\'><input type=\'text\' id=\'tsk_name\'></input></form></td>';
+	todo_html_tbl+='<td class=\'entry\'><form action=\'javascript:add_tsk_from_user();\'><input type=\'text\' id=\'tsk_name\'></input></form><button onclick=\'javascript:add_tsk_from_user();\'>Create</button></td>';
+//	todo_html_tbl+='<td class=\'entry\'>'+get_date()+'</td>';
+	todo_html_tbl+='<td class=\'entry\'></td>';
+	todo_html_tbl+='<td class=\'entry\'></td>';
+	todo_html_tbl+='<td class=\'entry\'></td>';
+	todo_html_tbl+='<td class=\'entry\'></td>';
+	todo_html_tbl+='</tr>'+"\n";
+	
+	//for each to-do item (aka task), create an associated row in the output
+	for(var n=0;n<tasks.length;n++){
+		todo_html_tbl+='<tr>';
+
+		if(tasks[n].tsk_edit){
+//			todo_html_tbl+='<td class=\'entry\'><button onclick=\'javascript:update_task('+tasks[n].tsk_id+');\'>Save</button></td>';
+//			todo_html_tbl+='<td class=\'entry\'><form action=\'javascript:update_task('+tasks[n].tsk_id+');\'><input type=\'text\' id=\'tsk'+tasks[n].tsk_id+'_name\' value=\''+tasks[n].tsk_name+'\'></input></form></td>';
+			todo_html_tbl+='<td class=\'entry\'><form action=\'javascript:update_task('+tasks[n].tsk_id+');\'><input type=\'text\' id=\'tsk'+tasks[n].tsk_id+'_name\' value=\''+tasks[n].tsk_name+'\'></input></form><button onclick=\'javascript:update_task('+tasks[n].tsk_id+');\'>Save</button></td>';
+
+//			todo_html_tbl+='<td class=\'entry\'>'+tasks[n].tsk_date+'</td>';
+			todo_html_tbl+='<td class=\'entry\' colspan=\'2\'><span onclick=\'javascript:cancel_edit_task('+tasks[n].tsk_id+');\' title=\'cancel editing operation\'>[&#8630; nvm]</span></td>';
+			todo_html_tbl+='<td class=\'entry\'><span onclick=\'javascript:promote_task('+tasks[n].tsk_id+');\' title=\'move task up\'>[&#8593;]</span></td>';
+			todo_html_tbl+='<td class=\'entry\'><span onclick=\'javascript:demote_task('+tasks[n].tsk_id+');\' title=\'move task down\'>[&#8595;]</span></td>';
+
+		
+		}else{
+//			todo_html_tbl+='<td>'+tasks[n].tsk_id+'</td>';
+			if(tasks[n].tsk_cmplt){
+				todo_html_tbl+='<td class=\'tsk_name\'><span class=\'cmplt\' onclick=\'javascript:edit_task('+tasks[n].tsk_id+');\' title=\'edit this task\'>'+tasks[n].tsk_name+'</span></td>';
+			}else{
+				todo_html_tbl+='<td class=\'tsk_name\'><span onclick=\'javascript:edit_task('+tasks[n].tsk_id+');\' title=\'edit this task\'>'+tasks[n].tsk_name+'</span></td>';
+			}
+			
+//			todo_html_tbl+='<td>'+tasks[n].tsk_date+'</td>';
+			if(tasks[n].tsk_cmplt){
+				todo_html_tbl+='<td><span class=\'reopen_btn\' onclick=\'javascript:reopen_task('+tasks[n].tsk_id+');\' title=\'re-open this task\'>[O]</span></td>';
+			}else{
+				todo_html_tbl+='<td><span class=\'cmplt_btn\' onclick=\'javascript:complete_task('+tasks[n].tsk_id+');\' title=\'mark task completed\'>[&#10003;]</span></td>';
+			}
+			todo_html_tbl+='<td><span class=\'del\' onclick=\'javascript:delete_task('+tasks[n].tsk_id+');\' title=\'delete this task\'>[X]</span></td>';
+			todo_html_tbl+='<td><span onclick=\'javascript:promote_task('+tasks[n].tsk_id+');\' title=\'move task up\'>[&#8593;]</span></td>';
+			todo_html_tbl+='<td><span onclick=\'javascript:demote_task('+tasks[n].tsk_id+');\' title=\'move task down\'>[&#8595;]</span></td>';
+			
+		}
+		
+		todo_html_tbl+='</tr>'+"\n";
+	}
+	
+	todo_html_tbl+='</table>'+"\n";
+	
+	//output
+	document.getElementById('todo_items').innerHTML=todo_html_tbl;
+
+	//info about how many tasks remain
+	document.getElementById('info').innerHTML='';
+//	document.getElementById('info').innerHTML='Info: There are '+tasks.length+' tasks on file.';
+	if(tasks.length==0){
+		document.getElementById('info').innerHTML='Info: No tasks are tracked; you\'re all done\!  Good job.';
+	}
+}
+
+function refresh_tasks(){
+	save_tasks(tasks);
+	disp_tsk_table(tasks);
+}
+
+//an ordered array of tasks which need to be done
+//starting from whatever is already stored on the user's computer
+//if the user has never entered any tasks this will be an empty array
+var tasks=get_saved_tasks();
+
+</script>
+
+<script type='text/javascript'>
+document.write('<title>'+prgrm_name+' v'+version+'</title>');
+</script>
+
+</head>
+
+<body onload='javascript:disp_tsk_table(get_saved_tasks());timed_output("hdg",prgrm_name+" v"+version,200,"|",true);'>
+
+<div id='hdg' class='heading'></div>
+
+<div id='notification' class='alert'></div>
+
+<div id='todo_items'></div>
+<div id='info' class='info'></div>
+
+</body>
+</html>
+
+

@@ -1,0 +1,9 @@
+{
+"name": "srs bsns",
+"description": "a simple task manager/todo list",
+"launch_path": "/index.html",
+"developer": { "name": "neutrak", "url": "" },
+"icons": { "32": "/images/icon32.png", "60": "/images/icon60.png", "128": "/images/icon128.png" },
+"default_locale": "en"
+}
+

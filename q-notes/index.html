@@ -1,0 +1,31 @@
+<html>
+
+<head>
+<title>Quick Notes</title>
+<script type='text/javascript' src='js/q-notes.js'></script>
+</head>
+
+<body onLoad='list_files();' style='text-align:center;'>
+
+File List
+<hr>
+<div id='file_list_div'></div>
+
+<!-- <a href='javascript:delete_all_files();'>delete all</a> -->
+
+<hr>
+
+<div id='buffer_name'>New File</div>
+<a href='javascript:new_file();'>[Open New File Buffer]</a>
+
+<hr>
+Name: <textarea id='fname' rows='1' cols='30'></textarea>
+<hr>
+
+<textarea id='content' rows='24' cols='40'>
+</textarea>
+<br>
+<button onClick='save_content();'>Save</button>
+
+</body>
+

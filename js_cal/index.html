@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<meta content="text/html;charset=utf-8" http-equiv="Content-Type">
+<html>
+<head>
+<title>JS Cal</title>
+
+<style>
+body{
+	text-align:center;
+}
+.smalltext{
+	font-size:12px;
+	text-align:left;
+}
+.center_blk{
+/*	display:block;*/
+	margin-left:auto;
+	margin-right:auto;
+}
+</style>
+
+<script type='text/javascript' src='js/js_cal.js'>
+</script>
+
+<script type='text/javascript'>
+//ids of output divs
+var ev_div_id='ev_div';
+var cal_div_id='calendar';
+var clock_div_id='dig_clock';
+
+//a global list of dates that are considered important (can be appended to later)
+var important_days=[];
+
+var today=new Date();
+var current_year=today.getFullYear();
+var holiday_color='#0000ff';
+var holidays=[
+	new month_day(current_year,10,31,holiday_color,'halloween'),
+//	new month_day(current_year,12,17,holiday_color,'saturnalia'),
+	new month_day(current_year,12,25,holiday_color,'christmas'),
+	new month_day(current_year,7,4,holiday_color,'independence day'),
+	new month_day(current_year,12,7,holiday_color,'pearl harbor'),
+	new month_day(current_year,3,17,holiday_color,'st patrick\'s day'),
+	new month_day(current_year,1,1,holiday_color,'new year\'s day'),
+	];
+
+//add holidays for other years besides the current one
+for(var i=-5;i<5;i++){
+	for(var j=0;j<holidays.length;j++){
+		var holiday=new month_day(current_year+i,holidays[j].month,holidays[j].day,holidays[j].color,holidays[j].text+' '+(current_year+i));
+		important_days.push(holiday);
+	}
+}
+
+for(var i=-5;i<5;i++){
+	//thanksgiving is the last thursday in november
+	var thanksgiving_month=new Date(current_year+i,10,1);
+	var last_thursday=get_last_day(4,thanksgiving_month.getDate(),thanksgiving_month.getDay(),10,current_year+i);
+	
+	var thanksgiving=new month_day(current_year+i,11,last_thursday,holiday_color,'thanksgiving '+(current_year+i));
+	important_days.push(thanksgiving);
+	
+	//United States national arbor day is the last Friday in April
+	var arbor_day_month=new Date(current_year+i,3,1);
+	var last_friday=get_last_day(5,arbor_day_month.getDate(),arbor_day_month.getDay(),3,current_year+i);
+	var arbor_day=new month_day(current_year+i,4,last_friday,holiday_color,'US national arbor day '+(current_year+i));
+	important_days.push(arbor_day);
+}
+
+//if no local storage variable is defined, define an empty array now
+if(!localStorage.highlighted_days){
+	localStorage.setItem('highlighted_days',JSON.stringify([]));
+}
+
+//grab any user-set events from the local storage in their browser
+var hglt_days=JSON.parse(localStorage.getItem('highlighted_days'));
+
+for(var i=0;i<hglt_days.length;i++){
+	important_days.push(hglt_days[i]);
+}
+
+</script>
+
+
+</head>
+<body onload='javascript:draw_calendar(document.getElementById(cal_div_id),today,important_days,"important_days",cal_div_id,ev_div_id);start_utc_clock(clock_div_id);'>
+
+<div id='dig_clock' style='font-size:12px;'></div>
+
+<div id='calendar'></div>
+<!--
+<button onclick='javavscript:today=new Date((today.getMonth()-1)>=0?today.getFullYear():(today.getFullYear()-1),month_loop(today.getMonth(),-1),today.getDate());draw_calendar(document.getElementById(cal_div_id),today,important_days,"important_days",cal_div_id,ev_div_id);'>&lt;- 1 month</button>
+<button onclick='javavscript:today=new Date((today.getMonth()+1)<=11?today.getFullYear():(today.getFullYear()+1),month_loop(today.getMonth(),1),today.getDate());draw_calendar(document.getElementById(cal_div_id),today,important_days,"important_days",cal_div_id,ev_div_id);'>1 month -&gt;</button>
+<br>
+-->
+<button onclick='javavscript:today=new Date((today.getMonth()-1)>=0?today.getFullYear():(today.getFullYear()-1),month_loop(today.getMonth(),-1),1);draw_calendar(document.getElementById(cal_div_id),today,important_days,"important_days",cal_div_id,ev_div_id);'>&lt;- 1 month</button>
+<button onclick='javavscript:today=new Date((today.getMonth()+1)<=11?today.getFullYear():(today.getFullYear()+1),month_loop(today.getMonth(),1),1);draw_calendar(document.getElementById(cal_div_id),today,important_days,"important_days",cal_div_id,ev_div_id);'>1 month -&gt;</button>
+<br>
+<!--
+<button onclick='javavscript:today=new Date(today.getTime()-days_to_ms(30));draw_calendar(document.getElementById(cal_div_id),today,important_days,"important_days",cal_div_id,ev_div_id);'>&lt;- 30 days</button>
+<button onclick='javavscript:today=new Date(today.getTime()+days_to_ms(30));draw_calendar(document.getElementById(cal_div_id),today,important_days,"important_days",cal_div_id,ev_div_id);'>30 days -&gt;</button>
+<br>
+-->
+
+<hr>
+<h5>Events this Month</h5>
+<hr>
+
+<div id='ev_div'></div>
+
+</body>
+</html>
+

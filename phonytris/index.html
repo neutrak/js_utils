@@ -1,0 +1,774 @@
+<html>
+<head>
+<title>phonytris</title>
+
+<script type='text/javascript'>
+
+//a single block
+//x and y are grid coordinates
+//w and h are width and height, respectively
+function block(x,y,w,h,color){
+	this.x=x;
+	this.y=y;
+	this.w=w;
+	this.h=h;
+	this.color=color;
+}
+
+//a piece, which may be one of several possible types
+//each piece holds a type and an array of blocks
+function piece(type,left_x,top_y,scale){
+	this.type=type;
+	this.left_x=left_x;
+	this.top_y=top_y;
+	
+	this.blocks=[];
+	if(type=='line'){
+		for(var i=0;i<4;i++){
+			this.blocks.push(new block(left_x,top_y+i,scale,scale,'#0000ff'));
+		}
+	}else if(type=='square'){
+		for(var i=0;i<2;i++){
+			for(var j=0;j<2;j++){
+				this.blocks.push(new block(left_x+j,top_y+i,scale,scale,'#ff0000'));
+			}
+		}
+	}else if(type=='tee'){
+		this.blocks.push(new block(left_x+1,top_y+1,scale,scale,'#00ffff'));
+		for(var i=0;i<3;i++){
+			this.blocks.push(new block(left_x+i,top_y,scale,scale,'#00ffff'));
+		}
+	}else if(type=='l'){
+		this.blocks.push(new block(left_x+1,top_y+2,scale,scale,'#ff00ff'));
+		for(var i=0;i<3;i++){
+			this.blocks.push(new block(left_x,top_y+i,scale,scale,'#ff00ff'));
+		}
+	}else if(type=='reverse-l'){
+		this.blocks.push(new block(left_x,top_y+2,scale,scale,'#00ff00'));
+		for(var i=0;i<3;i++){
+			this.blocks.push(new block(left_x+1,top_y+i,scale,scale,'#00ff00'));
+		}
+	}else if(type=='s'){
+		for(var i=0;i<2;i++){
+			this.blocks.push(new block(left_x+1+i,top_y,scale,scale,'#0039a0'));
+		}
+		for(var i=1;i>=0;i--){
+			this.blocks.push(new block(left_x+i,top_y+1,scale,scale,'#0039a0'));
+		}
+	}else if(type=='reverse-s'){
+		for(var i=0;i<2;i++){
+			this.blocks.push(new block(left_x+i,top_y,scale,scale,'#ffff00'));
+		}
+		for(var i=0;i<2;i++){
+			this.blocks.push(new block(left_x+1+i,top_y+1,scale,scale,'#ffff00'));
+		}
+	}else{
+		//invalid type
+	}
+}
+
+//a grid consisting of x and y offsets, rows, cols, and scale
+//where scale is the number of pixels per grid entry
+function grid(x_off,y_off,cols,rows,scale){
+	this.x_off=x_off;
+	this.y_off=y_off;
+	this.cols=cols;
+	this.rows=rows;
+	
+	//pixels per block
+	this.scale=scale;
+}
+
+//a clickable button
+function button(x,y,radius,ac){
+	this.x=x;
+	this.y=y;
+	this.radius=radius;
+	this.ac=ac;
+}
+
+//an array of all the visible blocks that aren't part of the active piece
+var static_blocks=[];
+
+//the currently active piece
+var active_piece=null;
+
+//the grid on which the block exists
+var disp_grid;
+
+//name of the output area
+var canvas_id='display';
+
+//how many lines have been cleared this game
+var lines_cleared=0;
+
+//whether or not we're in a menu
+//(true when not in a game or when paused)
+var in_menu=true;
+var selected_menu_item=0;
+var menu_items=['start','resume','reset'];
+
+//whether or not playing has already occurred
+var played=false;
+
+//all the visible buttons
+var all_buttons=[];
+
+//does the action of a user
+//(generic, may be called by key press or other events)
+function user_action(ac){
+	//get a reference to the canvas area so we can check width and height
+	var canvas=document.getElementById(canvas_id);
+	
+	//handle menu items
+	if(in_menu){
+		if(ac=='down'){
+			//if we're out of options go back to the start
+			if((selected_menu_item+1)>=menu_items.length){
+				selected_menu_item=0;
+			//otherwise go to next item
+			}else{
+				selected_menu_item++;
+			}
+		}else if(ac=='up'){
+			//if we're out of options go back to the end
+			if((selected_menu_item-1)<0){
+				selected_menu_item=(menu_items.length)-1;
+			//otherwise go to the previous item
+			}else{
+				selected_menu_item--;
+			}
+		}else if(ac=='enter'){
+			//start game
+			if(menu_items[selected_menu_item]=='start'){
+				init();
+			//resume paused game (start game if no blocks exist)
+			}else if(menu_items[selected_menu_item]=='resume'){
+				//if not in a game, start one
+				if((active_piece==null) && (static_blocks.length==0)){
+					init();
+				//if already in a game, resume it
+				}else{
+					in_menu=false;
+					gravity(canvas);
+				}
+			//reset all structures
+			}else if(menu_items[selected_menu_item]=='reset'){
+				static_blocks=[];
+				active_piece=null;
+				lines_cleared=0;
+				played=false;
+			}
+		}else{
+//			alert('unknown keycode '+e.keyCode);
+		}
+		
+		//if we're in the menu then don't try to control any actions at this time
+		draw_main_menu(canvas);
+		return;
+	//paused (basically main menu)
+	}else if(ac=='esc'){
+		//go to menu
+		in_menu=true;
+		
+		//default to "resume"
+		selected_menu_item=0;
+		for(var i=0;i<menu_items.length;i++){
+			if(menu_items[i]=='resume'){
+				selected_menu_item=i;
+				break;
+			}
+		}
+		
+		//update screen
+		draw_main_menu(canvas);
+		return;
+	}
+	
+	//if there is a piece in the user's control
+	if(active_piece!=null){
+		var next_piece=new piece(active_piece.type,
+			active_piece.left_x,
+			active_piece.top_y,
+			active_piece.scale);
+		
+		//the user pressed the "up" key, so rotate
+		if(ac=='up'){
+			
+			//defensive (piece should always have 4 blocks)
+			if(active_piece.blocks<4){
+				return;
+			}
+			
+			//the base around which we rotate
+			pivot_x=active_piece.blocks[2].x;
+			pivot_y=active_piece.blocks[2].y;
+			
+			//rotate each block in the piece
+			for(var i=0;i<active_piece.blocks.length;i++){
+				//rotate this block 90 degress counter-clockwise
+				//with respect to pivot coordinates
+				
+				var x_diff=(active_piece.blocks[i].x-pivot_x);
+				var y_diff=(active_piece.blocks[i].y-pivot_y);
+				
+				//rotation is accomplished by use of the linear mapping transformation
+				//the transformation matrix used is
+				// [ 0 -1 ]
+				// [ 1  0 ]
+				active_piece.blocks[i].x=pivot_x+((0*x_diff)+(-1*y_diff));
+				active_piece.blocks[i].y=pivot_y+((1*x_diff)+(0*y_diff));
+				
+				//if this move wasn't valid then un-do it
+				if(!valid_location(active_piece.blocks[i].x,active_piece.blocks[i].y)){
+					while(i>=0){
+						var x_diff=(active_piece.blocks[i].x-pivot_x);
+						var y_diff=(active_piece.blocks[i].y-pivot_y);
+						
+						//clockwise rotation matrix is
+						// [  0  1 ]
+						// [ -1  0 ]
+						active_piece.blocks[i].x=pivot_x+((0*x_diff)+(1*y_diff));
+						active_piece.blocks[i].y=pivot_y+((-1*x_diff)+(0*y_diff));
+						
+						i--;
+					}
+					
+					//leave the rotate loop early
+					break;
+				}
+			}
+		}else{
+			//for all the blocks within the piece, perform the action
+			for(var i=0;i<active_piece.blocks.length;i++){
+				next_piece.blocks[i]=active_piece.blocks[i];
+				
+				next_block=new block(active_piece.blocks[i].x,
+					active_piece.blocks[i].y,
+					active_piece.blocks[i].w,
+					active_piece.blocks[i].h,
+					active_piece.blocks[i].color);
+				
+				
+				//the user pressed the "left" key
+				if(ac=='left'){
+					next_block.x--;
+				//the user pressed the "right" key
+				}else if(ac=='right'){
+					next_block.x++;
+				//the user pressed the "down" key
+				}else if(ac=='down'){
+					//NOTE: the y axis is flipped, 0 at top
+					next_block.y++;
+				}
+				
+				//if this move is valid then make it!
+				if(valid_location(next_block.x,next_block.y)){
+					next_piece.blocks[i]=next_block;
+				//(otherwise stay where we are)
+				}else{
+					break;
+				}
+			}
+			
+			//if all the moves were valid, then write back to the real piece
+			if(i==active_piece.blocks.length){
+				active_piece=next_piece;
+			}
+		}
+		
+		//redraw the blocks after the user pressed a key
+		draw_screen(canvas);
+	}
+}
+
+//event handler for the key pressed down event
+//takes one argument, the event
+function handle_keydown(e){
+	var key_up=38;
+	var key_left=37;
+	var key_right=39;
+	var key_down=40;
+	var key_enter=13;
+	var key_esc=27;
+	
+	if(e.keyCode==key_up){
+		user_action('up');
+	}else if(e.keyCode==key_down){
+		user_action('down');
+	}else if(e.keyCode==key_left){
+		user_action('left');
+	}else if(e.keyCode==key_right){
+		user_action('right');
+	}else if(e.keyCode==key_enter){
+		user_action('enter');
+	}else if(e.keyCode==key_esc){
+		user_action('esc');
+	}
+}
+
+//mouse handling helper function, gets cursor position within canvas
+//this is needed to account for canvas offsets, etc.
+function get_cursor_position(e,canvas) {
+	var x;
+	var y;
+	if(e.pageX || e.pageY){
+		x=e.pageX;
+		y=e.pageY;
+	}else{
+		x=e.clientX+document.body.scrollLeft+document.documentElement.scrollLeft;
+		y=e.clientY+document.body.scrollTop+document.documentElement.scrollTop;
+	}
+	x-=canvas.offsetLeft;
+	y-=canvas.offsetTop;
+	
+	return [x,y];
+}
+
+//event handler for down click event
+//takes one argument, the event
+function handle_click(e){
+	//TODO: account for canvas offset within page
+	var click_pos=get_cursor_position(e,document.getElementById(canvas_id));
+	var e_x=click_pos[0];
+	var e_y=click_pos[1];
+	
+	//handle button clicks
+	for(var i=0;i<all_buttons.length;i++){
+		//pythagorean theorum is used for distance
+		//if distance is less than radius then the button was pressed
+		var dist=Math.pow((Math.pow(e_x-(all_buttons[i].x),2)+Math.pow(e_y-(all_buttons[i].y),2)),0.5);
+		if(dist<=all_buttons[i].radius){
+			user_action(all_buttons[i].ac);
+		}
+	}
+}
+
+//draws a circle within the given context
+function draw_circle(context,x,y,radius,color){
+	//draw a border around it
+	context.fillStyle='#000000';
+	context.beginPath();
+	context.moveTo(x,y);
+	context.arc(x,y,radius+1,0,Math.PI*2,false);
+	context.stroke();
+	
+	//fill in the circle
+	context.fillStyle=color;
+	context.beginPath();
+	context.moveTo(x,y);
+	context.arc(x,y,radius,0,Math.PI*2,false);
+	context.fill();
+}
+
+//draws an equilateral triangle at the given x and y
+//must be either vertically aligned (horiz=false) or horizontally aligned (horiz=true)
+function draw_triangle(context,x,y,len,color,horiz){
+//	alert('got x='+x+', y='+y+', len='+len);
+	
+	context.fillStyle=color;
+	
+	context.beginPath();
+	context.moveTo(x,y);
+	if(horiz){
+		context.lineTo(x+len,y+(len/2));
+		context.lineTo(x,y+len);
+	}else{
+		context.lineTo(x+(len/2),y+len);
+		context.lineTo(x+len,y);
+	}
+	context.lineTo(x,y);
+	context.closePath();
+	context.fill();
+}
+
+function draw_buttons(canvas){
+	var context=canvas.getContext('2d');
+	
+	for(var i=0;i<all_buttons.length;i++){
+		draw_circle(context,all_buttons[i].x,all_buttons[i].y,all_buttons[i].radius,'#0000ff');
+		
+		context.fillStyle='#ffffff';
+		
+		var rect_x=(all_buttons[i].x)-Math.floor((all_buttons[i].radius)/4);
+		var rect_y=(all_buttons[i].y)-Math.floor((all_buttons[i].radius)/4);
+		var rect_w=Math.floor(all_buttons[i].radius/2);
+		var rect_h=Math.floor(all_buttons[i].radius/2);
+		
+		var text_x=(all_buttons[i].x-Math.floor(all_buttons[i].radius/2))-3;
+		var text_y=(all_buttons[i].y+Math.floor(all_buttons[i].radius/2));
+		
+		//up arrow
+		if(all_buttons[i].ac=='up'){
+			context.fillRect(rect_x,rect_y,rect_w,rect_h);
+			draw_triangle(context,rect_x+rect_w,rect_y,(-1)*(Math.floor(all_buttons[i].radius/2)),'#ffffff',false);
+		//left arrow
+		}else if(all_buttons[i].ac=='left'){
+			context.fillRect(rect_x,rect_y,rect_w,rect_h);
+			draw_triangle(context,rect_x,rect_y+rect_h,(-1)*(Math.floor(all_buttons[i].radius/2)),'#ffffff',true);
+		//right arrow
+		}else if(all_buttons[i].ac=='right'){
+			context.fillRect(rect_x,rect_y,rect_w,rect_h);
+			draw_triangle(context,rect_x+rect_w,rect_y,(Math.floor(all_buttons[i].radius/2)),'#ffffff',true);
+		//down arrow
+		}else if(all_buttons[i].ac=='down'){
+			context.fillRect(rect_x,rect_y,rect_w,rect_h);
+			draw_triangle(context,rect_x,rect_y+rect_h,(Math.floor(all_buttons[i].radius/2)),'#ffffff',false);
+		//enter
+		}else if(all_buttons[i].ac=='enter'){
+			context.fillStyle='#ffffff';
+			context.font='12px Times New Roman';
+			context.fillText('ent',text_x,text_y);
+		//escape
+		}else if(all_buttons[i].ac=='esc'){
+			context.fillStyle='#ffffff';
+			context.font='12px Times New Roman';
+			context.fillText('esc',text_x,text_y);
+		}
+	}
+}
+
+//draw a single block with outline
+function draw_block(b,context){
+	
+	//draw all blocks relative to the grid
+	var x_off=disp_grid.x_off;
+	var y_off=disp_grid.y_off;
+	
+	//fill the block area with its color
+	context.fillStyle=b.color;
+	context.fillRect(x_off+(b.x*(b.w)),y_off+(b.y*(b.h)),b.w,b.h);
+	
+	//draw an outline around the block
+	context.strokeStyle='#000000';
+	context.strokeRect(x_off+(b.x*(b.w)),y_off+(b.y*(b.h)),b.w,b.h);
+}
+
+//draw all static blocks
+function draw_static_blocks(canvas){
+	var context=canvas.getContext('2d');
+	
+	//loop through all (static) blocks
+	for(var i=0;i<static_blocks.length;i++){
+		draw_block(static_blocks[i],context);
+	}
+}
+
+//draw everything on the screen
+function draw_screen(canvas){
+	var context=canvas.getContext('2d');
+	
+	var x_off=disp_grid.x_off;
+	var y_off=disp_grid.y_off;
+	
+	//clear the canvas buffer first
+	context.clearRect(0,0,canvas.width,canvas.height);
+	
+	//draw a border around the grid
+	context.strokeStyle='#000000';
+	context.strokeRect(x_off,y_off,(disp_grid.cols*disp_grid.scale),(disp_grid.rows*disp_grid.scale));
+	
+	//grid background
+	context.fillStyle='#eeeeee';
+	context.fillRect(x_off,y_off,(disp_grid.cols*disp_grid.scale),(disp_grid.rows*disp_grid.scale));
+	
+	//draw the active piece, if there is one
+	if(active_piece!=null){
+		for(var i=0;i<active_piece.blocks.length;i++){
+			draw_block(active_piece.blocks[i],context);
+		}
+	}
+	
+	//output how many lines have been cleared so far
+	context.fillStyle='#000000';
+	context.font='12px Times New Roman';
+	context.fillText('cleared '+lines_cleared+' line(s)',Math.floor(canvas.width/2)-40,canvas.height-35);
+	
+	//draw all the static blocks
+	draw_static_blocks(canvas);
+	
+	//show the buttons
+	draw_buttons(canvas);
+}
+
+//just a simple menu
+function draw_main_menu(canvas){
+	if(!set_canvas_size(canvas)){
+		return;
+	}
+	init_buttons(canvas);
+	
+	//if we're calling this function we're in a menu now!
+//	in_menu=true;
+	
+	var context=canvas.getContext('2d');
+	
+	//clear the canvas buffer first
+	context.clearRect(0,0,canvas.width,canvas.height);
+	
+	var menu_x_off=Math.floor((canvas.width/2)-30);
+	var menu_y_off=Math.floor((canvas.height/4));
+	
+	context.fillStyle='#000000';
+	context.font='16px Times New Roman';
+	context.fillText('phonytris',menu_x_off,menu_y_off-30);
+	
+	for(var i=0;i<menu_items.length;i++){
+		if(i==selected_menu_item){
+			context.fillStyle='#0000ff';
+			context.fillRect(menu_x_off,(i*20)+menu_y_off,60,20);
+		}
+		
+		context.strokeStyle='#000000';
+		context.strokeRect(menu_x_off,(i*20)+menu_y_off,60,20);
+		
+		context.fillStyle='#000000';
+		context.font='12px Times New Roman';
+		context.fillText(menu_items[i],menu_x_off,(i*20)+menu_y_off+10);
+	}
+	
+	if(played){
+		context.fillStyle='#000000';
+		context.font='12px Times New Roman';
+		context.fillText('cleared '+lines_cleared+' line(s)',Math.floor(canvas.width/2)-40,canvas.height-35);
+	}
+	
+	//show the buttons
+	draw_buttons(canvas);
+}
+
+//is this x,y location valid for a block?
+//to be valid a location must be within the bounds and currently empty
+function valid_location(grid_x,grid_y){
+	//x out of bounds
+	if(grid_x<0 || grid_x>=disp_grid.cols){
+		return false;
+	}
+	//y out of bounds
+	if(grid_y<0 || grid_y>=disp_grid.rows){
+		return false;
+	}
+	
+	for(var i=0;i<static_blocks.length;i++){
+		//if another block is already occupying this location
+		if((static_blocks[i].x==grid_x) && (static_blocks[i].y==grid_y)){
+			//then it's invalid (can't move there)
+			return false;
+		}
+	}
+	
+	//if we got here and didn't find any problems then the location is valid
+	//because there's no reason for it not to be
+	return true;
+}
+
+//one tick (frame) of gravity
+function gravity(canvas){
+/*
+	//make the static block array fall
+	for(var i=0;i<static_blocks.length;i++){
+		if(valid_location(static_blocks[i].x,static_blocks[i].y+1)){
+			static_blocks[i].y++;
+		}
+	}
+*/
+	
+	//if there is a piece falling, then make it fall
+	if(active_piece!=null){
+		//make it fall
+		for(var i=0;i<active_piece.blocks.length;i++){
+			if(valid_location(active_piece.blocks[i].x,active_piece.blocks[i].y+1)){
+				active_piece.blocks[i].y++;
+			//if this wasn't a valid next frame
+			}else{
+				//undo the falling that was already done
+				while(i>0){
+					i--;
+					active_piece.blocks[i].y--;
+				}
+				//and add these blocks to the static blocks instead
+				for(i=0;i<active_piece.blocks.length;i++){
+					static_blocks.push(active_piece.blocks[i]);
+				}
+				//re-set active piece to null and skip past this loop
+				active_piece=null;
+				break;
+			}
+		}
+	//if there isn't a piece falling, then put a new piece at the top!
+	//note that this won't be visible until the next iteration
+	}else{
+		//randomly choose which type to use
+		var prcnt=(Math.random())*100;
+		
+		var next_type='square';
+		if(prcnt<(100/7)){
+			next_type='line';
+		}else if(prcnt<(2*(100/7))){
+			next_type='square';
+		}else if(prcnt<(3*(100/7))){
+			next_type='tee';
+		}else if(prcnt<(4*(100/7))){
+			next_type='l';
+		}else if(prcnt<(5*(100/7))){
+			next_type='reverse-l';
+		}else if(prcnt<(6*(100/7))){
+			next_type='s';
+		}else{
+			next_type='reverse-s';
+		}
+		
+		active_piece=new piece(next_type,Math.floor(disp_grid.cols/2),0,disp_grid.scale);
+	}
+	
+	//track the highest-up static block location
+	//if this is <=0 then the user lost! (that means blocks go all the way to the top)
+	var smallest_static_y=disp_grid.rows;
+	
+	//check if any lines (rows) are filled with static blocks
+	for(var i=0;i<disp_grid.rows;i++){
+		var blocks_in_row=0;
+		//look through the blocks, tally all the blocks in this row
+		for(var j=0;j<static_blocks.length;j++){
+			if(static_blocks[j].y==i){
+				blocks_in_row++;
+			}
+			
+			//take the minimum of existing smallest y and this y
+			smallest_static_y=(static_blocks[j].y<smallest_static_y)?static_blocks[j].y:smallest_static_y;
+		}
+		
+		//if this row was full, then delete all the blocks in it
+		if(blocks_in_row==disp_grid.cols){
+			//increment the lines cleared counter
+			lines_cleared++;
+			
+			next_static_blocks=[];
+			
+			for(var j=0;j<static_blocks.length;j++){
+				//if this block WASN'T in the row to delete
+				if(static_blocks[j].y!=i){
+					//if this block was above the deleted row, then make it fall
+					//but only one space, not indefinitely
+					if(static_blocks[j].y<i){
+						static_blocks[j].y++;
+					}
+					
+					//add it to the new block list
+					next_static_blocks.push(static_blocks[j]);
+				}
+			}
+			//use the new block list and GC the old one
+			static_blocks=next_static_blocks;
+		}
+	}
+	
+	if(smallest_static_y<=0){
+		var context=canvas.getContext('2d');
+		context.fillStyle='#000000';
+		context.font='12px Times New Roman';
+		context.fillText('You lost (hit top)',Math.floor(canvas.width/2)-40,canvas.height-15);
+		active_piece=null;
+		static_blocks=[];
+		
+		setTimeout(function(){in_menu=true;draw_main_menu(canvas);},5000);
+		return;
+	}
+	
+	if(!in_menu){
+		//redraw the screen in case something moved (it probably did)
+		draw_screen(canvas);
+		
+		//in half a second, do this again
+//		setTimeout(function(){gravity(canvas);},500);
+		
+		//vary the speed of gravity based on the number of lines already cleared
+		
+		//milliseconds for basic wait, and how much that is reduced per line cleared (in milliseconds)
+		var ms_base_wait=500;
+		var ms_per_line=5;
+		
+		//the ternary here limits us so the highest possible speed is one tick every millisecond
+		setTimeout(function(){gravity(canvas);},ms_base_wait-(((lines_cleared*ms_per_line)<(ms_base_wait-1))?(lines_cleared*ms_per_line):(ms_base_wait-1)));
+	}
+}
+
+//resizes canvas based on window size
+//returns true on success, false on failure
+function set_canvas_size(canvas){
+	canvas.width=(window.innerWidth-20)
+	canvas.height=(window.innerHeight-20);
+	
+	if((canvas.width<100) || (canvas.height<100)){
+		alert('window too small, giving up...');
+		return false;
+	}
+	return true;
+}
+
+//runtime!
+//intialize global variables and event handlers
+function init(){
+	//if we were in a menu we're not any more
+	in_menu=false;
+	played=true;
+	
+	var canvas=document.getElementById(canvas_id);
+	if(!set_canvas_size(canvas)){
+		return;
+	}
+	init_buttons(canvas);
+	
+	//pixels per block
+	var scale=Math.floor(canvas.height/40);
+	
+	//grid position within the canvas (based on browser size)
+	var grid_cols=12;
+	var grid_rows=32;
+	var grid_x_off=Math.floor((canvas.width/2)-((grid_cols*scale)/2));
+	var grid_y_off=10;
+	
+	disp_grid=new grid(grid_x_off,grid_y_off,grid_cols,grid_rows,scale);
+	
+	
+	//initially no lines have been cleared
+	lines_cleared=0;
+	
+	//reset the pieces in case a game was already played
+	active_piece=null;
+	static_blocks=[];
+	
+	draw_screen(canvas);
+	
+	//start gravity going!
+	//(once this is called once it will keep going until game over)
+	gravity(canvas);
+}
+
+//create buttons so the user can interact without a keyboard
+function init_buttons(canvas){
+	var x_inc=Math.floor(canvas.width/8);
+	var y_inc=Math.floor(canvas.height/8);
+	
+	all_buttons=[
+		new button(25,40,20,'up'),
+		new button(canvas.width-25,40,20,'down'),
+		new button(25,110,20,'left'),
+		new button(canvas.width-25,110,20,'right'),
+		new button(25,canvas.height-35,20,'enter'),
+		new button(canvas.width-25,canvas.height-35,20,'esc')
+		];
+}
+
+</script>
+
+</head>
+
+<body onload='javascript:draw_main_menu(document.getElementById(canvas_id));' onkeydown='javascript:handle_keydown(event);' onclick='javascript:handle_click(event);'>
+
+<canvas id='display' width='600' height='600' style='margin: 0 auto; display: flex; justify-content: center; border:2px solid black;'>
+</canvas>
+
+</body>
+</html>
+
