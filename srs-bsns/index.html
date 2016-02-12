@@ -68,12 +68,19 @@ button{
 .info{
 	text-align:center;
 }
+.undo{
+	background:rgba(170,170,255,0.5);
+	color:#000000;
+}
 </style>
 
 <script type='text/javascript'>
 var prgrm_name='srs bsns';
-//var prgrm_name='task mngr';
-var version='0.2.0';
+var version='0.2.1';
+
+//a history of actions the user performed
+//stored in case an undo is deisred
+var act_hist=[];
 
 //a task structure, to store a to-do task
 function tsk(tsk_id,tsk_name,tsk_date){
@@ -82,6 +89,13 @@ function tsk(tsk_id,tsk_name,tsk_date){
 	this.tsk_date=tsk_date;
 	this.tsk_cmplt=false;
 	this.tsk_edit=false;
+}
+
+//an action data structure for history book-keeping
+function act(type,tsk,idx){
+	this.type=type;
+	this.tsk=tsk;
+	this.idx=idx;
 }
 
 //make an html element fade then disappear
@@ -97,6 +111,61 @@ function fade_disappear(element,red,green,blue,alpha){
 		element.style.color='rgba(0,0,0,'+alpha+')';
 		setTimeout(function(){fade_disappear(element,red,green,blue,alpha);},50);
 	}
+}
+
+//send a notification to the user
+function notify_txt(txt,r,g,b,timeout){
+	var notify_div=document.getElementById('notification');
+	notify_div.innerHTML=txt;
+	notify_div.style.color='#000000';
+	notify_div.style.background='rgba('+r+','+g+','+b+',1)';
+	setTimeout(function(){fade_disappear(notify_div,r,g,b,1)},timeout);
+}
+
+//update the undo div based on how many things are available to undo
+function undo_updt(){
+	var undo_div=document.getElementById('undo');
+	if(act_hist.length>0){
+		undo_div.innerHTML='[[ Undo '+(act_hist[act_hist.length-1].type)+' ('+act_hist.length+') ]]';
+		undo_div.innerHTML+=' <span onclick=\'javascript:act_hist.length=0;undo_updt();\'>[[ Clear undo history ]]</span>';
+	}else{
+		undo_div.innerHTML='';
+	}
+}
+
+//undo the last action
+function undo_act(){
+	//if there is no history of actions then there is nothing to undo
+	//so just return
+	if(act_hist.length<1){
+		return;
+	}
+	
+	//get the last action, that's what we'll undo
+	var last_act=act_hist[act_hist.length-1];
+	switch(last_act.type){
+		case 'delete':
+			//undo a delete with an add (preserving index if possible)
+			if(last_act.tsk<0 || last_act.tsk>=tasks.length){
+				tasks.push(last_act.tsk);
+			}else{
+				tasks.splice(last_act.idx,0,last_act.tsk);
+			}
+			break;
+		case 'add':
+			//undo a create with a delete
+			delete_task(last_act.tsk.tsk_id,false);
+			break;
+		//promote is un-done by demote and vice versa
+		//complete is un-done by re-open and vice versa
+		default:
+			break;
+	}
+	
+	//remove this action from the undo list
+	act_hist.length-=1;
+	undo_updt();
+	refresh_tasks();
 }
 
 //just a timed output function that looks like typing
@@ -165,12 +234,12 @@ function add_tsk_from_user(){
 		tasks.unshift(new tsk(get_max_id(tasks)+1,tsk_name,tsk_date));
 		save_tasks(tasks);
 		disp_tsk_table(tasks);
+		
+		act_hist.push(new act('add',tasks[0],0));
+		notify_txt('Info: Added task \"'+tsk_name+'\"',0,255,0,4000);
+		undo_updt();
 	}else{
-		var notify_div=document.getElementById('notification');
-		notify_div.innerHTML='Err: Name is required when entering a new task';
-		notify_div.style.color='#000000';
-		notify_div.style.background='rgba(255,0,0,1)';
-		setTimeout(function(){fade_disappear(notify_div,255,0,0,1)},4000);
+		notify_txt('Err: Name is required when entering a new task',255,0,0,4000);
 	}
 }
 
@@ -210,11 +279,16 @@ function reopen_task(id){
 }
 
 //delete the given task
-function delete_task(id){
+function delete_task(id,undo_hist){
 	//re-make the tasks array without the given task (implicitly deleting it)
 	var new_tasks=[];
 	for(var n=0;n<tasks.length;n++){
 		if(tasks[n].tsk_id==id){
+			if(undo_hist){
+				act_hist.push(new act('delete',tasks[n],n));
+				notify_txt('Info: Deleted task \"'+tasks[n].tsk_name+'\"',255,0,0,4000);
+				undo_updt();
+			}
 			continue;
 		}
 		new_tasks.push(tasks[n]);
@@ -291,11 +365,7 @@ function update_task(id){
 				tasks[n].tsk_edit=false;
 			}else{
 				//a null-named task is an error
-				var notify_div=document.getElementById('notification');
-				notify_div.innerHTML='Err: Name is required when updating a new task';
-				notify_div.style.color='#000000';
-				notify_div.style.background='rgba(255,0,0,1)';
-				setTimeout(function(){fade_disappear(notify_div,255,0,0,1)},4000);
+				notify_txt('Err: Name is required when updating a new task',255,0,0,4000);
 			}
 			break;
 		}
@@ -360,7 +430,7 @@ function disp_tsk_table(tasks){
 			}else{
 				todo_html_tbl+='<td><span class=\'cmplt_btn\' onclick=\'javascript:complete_task('+tasks[n].tsk_id+');\' title=\'mark task completed\'>[&#10003;]</span></td>';
 			}
-			todo_html_tbl+='<td><span class=\'del\' onclick=\'javascript:delete_task('+tasks[n].tsk_id+');\' title=\'delete this task\'>[X]</span></td>';
+			todo_html_tbl+='<td><span class=\'del\' onclick=\'javascript:delete_task('+tasks[n].tsk_id+',true);\' title=\'delete this task\'>[X]</span></td>';
 			todo_html_tbl+='<td><span onclick=\'javascript:promote_task('+tasks[n].tsk_id+');\' title=\'move task up\'>[&#8593;]</span></td>';
 			todo_html_tbl+='<td><span onclick=\'javascript:demote_task('+tasks[n].tsk_id+');\' title=\'move task down\'>[&#8595;]</span></td>';
 			
@@ -404,6 +474,7 @@ document.write('<title>'+prgrm_name+' v'+version+'</title>');
 
 <div id='hdg' class='heading'></div>
 
+<div id='undo' class='undo' onclick='javascript:undo_act();'></div>
 <div id='notification' class='alert'></div>
 
 <div id='todo_items'></div>
